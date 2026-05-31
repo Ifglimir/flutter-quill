@@ -954,8 +954,11 @@ class QuillRawEditorState extends EditorState
   }
 
   bool _shouldShowSelectionHandles() {
-    return widget.config.showSelectionHandles &&
-        !controller.selection.isCollapsed;
+    // DenkZettel fork: show the Material caret-drag handle for collapsed
+    // selections too, so users can reposition the caret on Android the same
+    // way they can in native `TextField`. Upstream gates this on
+    // `!controller.selection.isCollapsed`.
+    return widget.config.showSelectionHandles;
   }
 
   @override

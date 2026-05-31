@@ -599,7 +599,11 @@ class _TextSelectionHandleOverlayState
           width: interactiveRect.width,
           height: interactiveRect.height,
           child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
+            // DenkZettel fork: opaque (not translucent), so taps on the
+            // handle do not propagate through to the editor's caret-tap
+            // recognizer. Otherwise the caret jumps to the touch point as
+            // soon as the user grabs the handle.
+            behavior: HitTestBehavior.opaque,
             dragStartBehavior: widget.dragStartBehavior,
             onPanStart: _handleDragStart,
             onPanUpdate: _handleDragUpdate,

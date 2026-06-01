@@ -430,7 +430,6 @@ class _TextSelectionHandleOverlay extends StatefulWidget {
 class _TextSelectionHandleOverlayState
     extends State<_TextSelectionHandleOverlay>
     with SingleTickerProviderStateMixin {
-  // ignore: unused_field
   late Offset _dragPosition;
 
   late AnimationController _controller;
@@ -489,8 +488,13 @@ class _TextSelectionHandleOverlayState
   void _handleDragUpdate(DragUpdateDetails details) {
     widget.dragOffsetNotifier?.value = details.globalPosition;
     _dragPosition += details.delta;
+    // DenkZettel fork: use _dragPosition (offset-corrected in _handleDragStart
+    // by -handleSize.height) instead of the raw finger position. Upstream uses
+    // details.globalPosition here, which makes the caret jump ~2 lines down
+    // on the first drag frame because the finger sits in the middle of the
+    // handle teardrop, well below the caret line.
     final position =
-        widget.renderObject.getPositionForOffset(details.globalPosition);
+        widget.renderObject.getPositionForOffset(_dragPosition);
     if (widget.selection.isCollapsed) {
       widget.onSelectionHandleChanged(TextSelection.fromPosition(position));
       return;

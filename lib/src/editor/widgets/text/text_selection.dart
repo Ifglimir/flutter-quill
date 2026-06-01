@@ -26,18 +26,11 @@ TextSelection localSelection(Node node, TextSelection selection, fromParent) {
 enum _TextSelectionHandlePosition { start, end }
 
 @visibleForTesting
-double calculateTextSelectionHandleDragPosition({
-  required double dragDy,
-  required double previousHandleDragDy,
-  required double preferredLineHeight,
-}) {
-  assert(preferredLineHeight > 0);
-  final distanceDragged = dragDy - previousHandleDragDy;
-  final dragDirection = distanceDragged < 0.0 ? -1 : 1;
-  final linesDragged =
-      dragDirection * (distanceDragged.abs() / preferredLineHeight).floor();
-  return previousHandleDragDy + linesDragged * preferredLineHeight;
-}
+Offset calculateTextSelectionHandleDragPosition({
+  required Offset currentTarget,
+  required Offset dragDelta,
+}) =>
+    currentTarget + dragDelta;
 
 /// internal use, used to get drag direction information
 class DragTextSelection extends TextSelection {
@@ -445,13 +438,6 @@ class _TextSelectionHandleOverlayState
     extends State<_TextSelectionHandleOverlay>
     with SingleTickerProviderStateMixin {
   late Offset _dragPosition;
-  // DenkZettel fork: Flutter's native selection overlay tracks the handle's
-  // vertical contact point separately from the target line centre. This keeps
-  // the caret on its current line until the drag crosses a full line height,
-  // instead of applying a stale 2D finger-to-caret offset after every rebuild.
-  late double _handleDragPositionDy;
-  late double _handleDragTargetDy;
-  late double _handleDragLineHeight;
   bool _isDraggingHandle = false;
 
   late AnimationController _controller;
@@ -506,18 +492,17 @@ class _TextSelectionHandleOverlayState
     final endpoint = widget.position == _TextSelectionHandlePosition.start
         ? endpoints.first
         : endpoints.last;
-    _handleDragLineHeight =
-        widget.renderObject.preferredLineHeight(textPosition);
-    _handleDragPositionDy = details.globalPosition.dy;
+    final lineHeight = widget.renderObject.preferredLineHeight(textPosition);
 
-    // Use the vertical centre of the line the handle points at, not the visual
-    // handle/caret centre. Material handles hang off the line, so resolving the
-    // raw touch point produces a line-height-sized offset.
-    final centerOfLineLocal = endpoint.point.dy - _handleDragLineHeight / 2;
-    final centerOfLineGlobal =
-        widget.renderObject.localToGlobal(Offset(0, centerOfLineLocal)).dy;
-    _handleDragTargetDy = centerOfLineGlobal - details.globalPosition.dy;
-    _dragPosition = Offset(details.globalPosition.dx, centerOfLineGlobal);
+    // Start from the real selection endpoint instead of estimating from the
+    // finger position and handle height. After that, keep Patch 3's continuous
+    // delta-based motion so Quill can resolve both horizontal and vertical
+    // movement on every pan frame.
+    final dragStartTargetLocal = Offset(
+      endpoint.point.dx,
+      endpoint.point.dy - lineHeight / 2,
+    );
+    _dragPosition = widget.renderObject.localToGlobal(dragStartTargetLocal);
   }
 
   void _handleDragEnd(DragEndDetails details) {
@@ -531,22 +516,9 @@ class _TextSelectionHandleOverlayState
       return;
     }
     widget.dragOffsetNotifier?.value = details.globalPosition;
-    final localPosition =
-        widget.renderObject.globalToLocal(details.globalPosition);
-    final nextHandleDragPositionLocal =
-        calculateTextSelectionHandleDragPosition(
-      dragDy: localPosition.dy,
-      previousHandleDragDy: widget.renderObject
-          .globalToLocal(Offset(0, _handleDragPositionDy))
-          .dy,
-      preferredLineHeight: _handleDragLineHeight,
-    );
-    _handleDragPositionDy = widget.renderObject
-        .localToGlobal(Offset(0, nextHandleDragPositionLocal))
-        .dy;
-    _dragPosition = Offset(
-      details.globalPosition.dx,
-      _handleDragPositionDy + _handleDragTargetDy,
+    _dragPosition = calculateTextSelectionHandleDragPosition(
+      currentTarget: _dragPosition,
+      dragDelta: details.delta,
     );
     final position = widget.renderObject.getPositionForOffset(_dragPosition);
     if (widget.selection.isCollapsed) {

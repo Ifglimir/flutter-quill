@@ -3,33 +3,23 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('selection handle drag math', () {
-    test('keeps handle y on the same line until a full line is dragged', () {
+    test('moves the target continuously with the drag delta', () {
       expect(
         calculateTextSelectionHandleDragPosition(
-          dragDy: 119,
-          previousHandleDragDy: 100,
-          preferredLineHeight: 20,
+          currentTarget: const Offset(40, 80),
+          dragDelta: const Offset(12, 7),
         ),
-        100,
+        const Offset(52, 87),
       );
     });
 
-    test('moves handle y by whole line heights in both directions', () {
+    test('does not snap vertical movement to full line heights', () {
       expect(
         calculateTextSelectionHandleDragPosition(
-          dragDy: 120,
-          previousHandleDragDy: 100,
-          preferredLineHeight: 20,
+          currentTarget: const Offset(40, 80),
+          dragDelta: const Offset(0, 19),
         ),
-        120,
-      );
-      expect(
-        calculateTextSelectionHandleDragPosition(
-          dragDy: 59,
-          previousHandleDragDy: 100,
-          preferredLineHeight: 20,
-        ),
-        60,
+        const Offset(40, 99),
       );
     });
   });

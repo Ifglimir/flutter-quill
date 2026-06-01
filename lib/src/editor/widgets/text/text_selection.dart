@@ -25,6 +25,20 @@ TextSelection localSelection(Node node, TextSelection selection, fromParent) {
 /// [start] handle always moves the [start]/[baseOffset] of the selection.
 enum _TextSelectionHandlePosition { start, end }
 
+@visibleForTesting
+double calculateTextSelectionHandleDragPosition({
+  required double dragDy,
+  required double previousHandleDragDy,
+  required double preferredLineHeight,
+}) {
+  assert(preferredLineHeight > 0);
+  final distanceDragged = dragDy - previousHandleDragDy;
+  final dragDirection = distanceDragged < 0.0 ? -1 : 1;
+  final linesDragged =
+      dragDirection * (distanceDragged.abs() / preferredLineHeight).floor();
+  return previousHandleDragDy + linesDragged * preferredLineHeight;
+}
+
 /// internal use, used to get drag direction information
 class DragTextSelection extends TextSelection {
   const DragTextSelection({
@@ -431,12 +445,14 @@ class _TextSelectionHandleOverlayState
     extends State<_TextSelectionHandleOverlay>
     with SingleTickerProviderStateMixin {
   late Offset _dragPosition;
-  // DenkZettel fork: offset between the finger position at drag start and the
-  // actual caret centre. Captured once in _handleDragStart and re-applied on
-  // every update so the caret follows the line the user really meant to grab,
-  // independent of handle size, touch slop or where on the teardrop they
-  // grabbed.
-  Offset _dragPositionRelativeToCaret = Offset.zero;
+  // DenkZettel fork: Flutter's native selection overlay tracks the handle's
+  // vertical contact point separately from the target line centre. This keeps
+  // the caret on its current line until the drag crosses a full line height,
+  // instead of applying a stale 2D finger-to-caret offset after every rebuild.
+  late double _handleDragPositionDy;
+  late double _handleDragTargetDy;
+  late double _handleDragLineHeight;
+  bool _isDraggingHandle = false;
 
   late AnimationController _controller;
 
@@ -477,34 +493,62 @@ class _TextSelectionHandleOverlayState
   }
 
   void _handleDragStart(DragStartDetails details) {
+    if (!widget.renderObject.attached) {
+      return;
+    }
+    _isDraggingHandle = true;
     widget.dragOffsetNotifier?.value = details.globalPosition;
     final textPosition = widget.position == _TextSelectionHandlePosition.start
         ? widget.selection.base
         : widget.selection.extent;
-    // DenkZettel fork: capture the exact offset from the finger to the caret
-    // centre at grab time. This neutralises both the teardrop Y-offset and the
-    // DragStartBehavior.start touch slop in one go.
-    final caretRect = widget.renderObject.getLocalRectForCaret(textPosition);
-    final caretCentreGlobal =
-        widget.renderObject.localToGlobal(caretRect.center);
-    _dragPositionRelativeToCaret = caretCentreGlobal - details.globalPosition;
-    _dragPosition = caretCentreGlobal;
+    final endpoints =
+        widget.renderObject.getEndpointsForSelection(widget.selection);
+    final endpoint = widget.position == _TextSelectionHandlePosition.start
+        ? endpoints.first
+        : endpoints.last;
+    _handleDragLineHeight =
+        widget.renderObject.preferredLineHeight(textPosition);
+    _handleDragPositionDy = details.globalPosition.dy;
+
+    // Use the vertical centre of the line the handle points at, not the visual
+    // handle/caret centre. Material handles hang off the line, so resolving the
+    // raw touch point produces a line-height-sized offset.
+    final centerOfLineLocal = endpoint.point.dy - _handleDragLineHeight / 2;
+    final centerOfLineGlobal =
+        widget.renderObject.localToGlobal(Offset(0, centerOfLineLocal)).dy;
+    _handleDragTargetDy = centerOfLineGlobal - details.globalPosition.dy;
+    _dragPosition = Offset(details.globalPosition.dx, centerOfLineGlobal);
   }
 
   void _handleDragEnd(DragEndDetails details) {
+    _isDraggingHandle = false;
     // when the drag is complete, we need to clear the drag offset
     widget.dragOffsetNotifier?.value = null;
   }
 
   void _handleDragUpdate(DragUpdateDetails details) {
+    if (!widget.renderObject.attached || !_isDraggingHandle) {
+      return;
+    }
     widget.dragOffsetNotifier?.value = details.globalPosition;
-    // DenkZettel fork: apply the grab-time offset to the live finger
-    // position. Upstream passed details.globalPosition (raw finger) to
-    // getPositionForOffset, which makes the caret trail ~half a handle-height
-    // below the line plus the touch-slop horizontally.
-    _dragPosition = details.globalPosition + _dragPositionRelativeToCaret;
-    final position =
-        widget.renderObject.getPositionForOffset(_dragPosition);
+    final localPosition =
+        widget.renderObject.globalToLocal(details.globalPosition);
+    final nextHandleDragPositionLocal =
+        calculateTextSelectionHandleDragPosition(
+      dragDy: localPosition.dy,
+      previousHandleDragDy: widget.renderObject
+          .globalToLocal(Offset(0, _handleDragPositionDy))
+          .dy,
+      preferredLineHeight: _handleDragLineHeight,
+    );
+    _handleDragPositionDy = widget.renderObject
+        .localToGlobal(Offset(0, nextHandleDragPositionLocal))
+        .dy;
+    _dragPosition = Offset(
+      details.globalPosition.dx,
+      _handleDragPositionDy + _handleDragTargetDy,
+    );
+    final position = widget.renderObject.getPositionForOffset(_dragPosition);
     if (widget.selection.isCollapsed) {
       widget.onSelectionHandleChanged(TextSelection.fromPosition(position));
       return;

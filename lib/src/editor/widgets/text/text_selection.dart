@@ -431,6 +431,12 @@ class _TextSelectionHandleOverlayState
     extends State<_TextSelectionHandleOverlay>
     with SingleTickerProviderStateMixin {
   late Offset _dragPosition;
+  // DenkZettel fork: offset between the finger position at drag start and the
+  // actual caret centre. Captured once in _handleDragStart and re-applied on
+  // every update so the caret follows the line the user really meant to grab,
+  // independent of handle size, touch slop or where on the teardrop they
+  // grabbed.
+  Offset _dragPositionRelativeToCaret = Offset.zero;
 
   late AnimationController _controller;
 
@@ -475,9 +481,14 @@ class _TextSelectionHandleOverlayState
     final textPosition = widget.position == _TextSelectionHandlePosition.start
         ? widget.selection.base
         : widget.selection.extent;
-    final lineHeight = widget.renderObject.preferredLineHeight(textPosition);
-    final handleSize = widget.selectionControls.getHandleSize(lineHeight);
-    _dragPosition = details.globalPosition + Offset(0, -handleSize.height);
+    // DenkZettel fork: capture the exact offset from the finger to the caret
+    // centre at grab time. This neutralises both the teardrop Y-offset and the
+    // DragStartBehavior.start touch slop in one go.
+    final caretRect = widget.renderObject.getLocalRectForCaret(textPosition);
+    final caretCentreGlobal =
+        widget.renderObject.localToGlobal(caretRect.center);
+    _dragPositionRelativeToCaret = caretCentreGlobal - details.globalPosition;
+    _dragPosition = caretCentreGlobal;
   }
 
   void _handleDragEnd(DragEndDetails details) {
@@ -487,12 +498,11 @@ class _TextSelectionHandleOverlayState
 
   void _handleDragUpdate(DragUpdateDetails details) {
     widget.dragOffsetNotifier?.value = details.globalPosition;
-    _dragPosition += details.delta;
-    // DenkZettel fork: use _dragPosition (offset-corrected in _handleDragStart
-    // by -handleSize.height) instead of the raw finger position. Upstream uses
-    // details.globalPosition here, which makes the caret jump ~2 lines down
-    // on the first drag frame because the finger sits in the middle of the
-    // handle teardrop, well below the caret line.
+    // DenkZettel fork: apply the grab-time offset to the live finger
+    // position. Upstream passed details.globalPosition (raw finger) to
+    // getPositionForOffset, which makes the caret trail ~half a handle-height
+    // below the line plus the touch-slop horizontally.
+    _dragPosition = details.globalPosition + _dragPositionRelativeToCaret;
     final position =
         widget.renderObject.getPositionForOffset(_dragPosition);
     if (widget.selection.isCollapsed) {
